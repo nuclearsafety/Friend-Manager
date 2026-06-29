@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * ╔════════════════════════════════════════════╗
- * ║     Discord Friend Manager  v1.0.2         ║
+ * ║     Discord Friend Manager  v1.2.0         ║
  * ║     Node.js CLI — Zero dependencies        ║
  * ╚════════════════════════════════════════════╝
  *
@@ -48,17 +48,15 @@ ${C.blue}${C.bold}  ██████╗ ███████╗███╗  
   ██║  ██║██╔══╝  ██║╚██╔╝██║
   ██████╔╝██║     ██║ ╚═╝ ██║
   ╚═════╝ ╚═╝     ╚═╝     ╚═╝${C.r}
-${C.white}${C.bold}  Discord Friend Manager ${C.gray}v1.0.2${C.r}
+${C.white}${C.bold}  Discord Friend Manager ${C.gray}v1.2.0${C.r}
 ${C.yellow}  ⚠  Unofficial — may violate Discord ToS${C.r}
 `);
 }
 
-// ─── API Wrapper (Fixed) ────────────────────────────────────────
+// ─── API Wrapper ────────────────────────────────────────────────
 function apiCall(method, path, token, body = null) {
   return new Promise((resolve, reject) => {
     const payload = body ? JSON.stringify(body) : null;
-
-    // Remove any existing "Bearer " prefix – we’ll use the raw token
     const cleanToken = token.replace(/^Bearer\s+/i, '');
 
     const headers = {
@@ -76,7 +74,6 @@ function apiCall(method, path, token, body = null) {
       'X-Discord-Locale'   : 'en-US',
     };
 
-    // Only set Content-Type / Origin / Referer when there is a body
     if (payload) {
       headers['Content-Type'] = 'application/json';
       headers['Origin']       = 'https://discord.com';
@@ -144,6 +141,77 @@ const getPending = async (t) => {
 
 const removeFriend = async (t, id) => {
   const { status, data } = await apiCall('DELETE', `/users/@me/relationships/${id}`, t);
+  if (status === 429 && data?.retry_after) return { ok: false, retryAfter: data.retry_after * 1000 };
+  return { ok: status === 204, retryAfter: 0 };
+};
+
+// DMs & Servers helpers
+async function getAllDMChannels(token) {
+  let channels = [];
+  let offset = 0;
+  const limit = 100;
+  while (true) {
+    const { status, data } = await apiCall('GET', `/users/@me/channels?limit=${limit}&offset=${offset}`, token);
+    if (status !== 200 || !Array.isArray(data)) break;
+    channels = channels.concat(data);
+    if (data.length < limit) break;
+    offset += limit;
+  }
+  return channels.filter(ch => ch.type === 1);
+}
+
+const closeDM = async (t, channelId) => {
+  const { status, data } = await apiCall('DELETE', `/channels/${channelId}`, t);
+  if (status === 429 && data?.retry_after) return { ok: false, retryAfter: data.retry_after * 1000 };
+  return { ok: status === 200, retryAfter: 0 };
+};
+
+async function getAllGuilds(token) {
+  const { status, data } = await apiCall('GET', '/users/@me/guilds', token);
+  if (status !== 200 || !Array.isArray(data)) return [];
+  return data;
+}
+
+const leaveGuild = async (t, guildId) => {
+  const { status, data } = await apiCall('DELETE', `/users/@me/guilds/${guildId}`, t);
+  if (status === 429 && data?.retry_after) return { ok: false, retryAfter: data.retry_after * 1000 };
+  return { ok: status === 204, retryAfter: 0 };
+};
+
+// New: Create/get DM channel with a user
+async function getOrCreateDM(token, userId) {
+  const { status, data } = await apiCall('POST', '/users/@me/channels', token, { recipient_id: userId });
+  if (status === 200) return data; // channel object
+  // If already exists, sometimes 400 with message about existing, but we'll try to get from existing list
+  if (status === 400 && data?.code === 50007) {
+    // Cannot send messages to this user; return null
+    return null;
+  }
+  // Try to find from existing DMs
+  const dms = await getAllDMChannels(token);
+  const found = dms.find(ch => ch.recipients?.length === 1 && ch.recipients[0].id === userId);
+  return found || null;
+}
+
+// Fetch all messages in a channel (with pagination)
+async function fetchAllMessages(token, channelId) {
+  const messages = [];
+  let before = null;
+  while (true) {
+    let path = `/channels/${channelId}/messages?limit=100`;
+    if (before) path += `&before=${before}`;
+    const { status, data } = await apiCall('GET', path, token);
+    if (status !== 200 || !Array.isArray(data) || data.length === 0) break;
+    messages.push(...data);
+    if (data.length < 100) break;
+    before = data[data.length - 1].id;
+  }
+  return messages;
+}
+
+// Delete a single message
+const deleteMessage = async (t, channelId, messageId) => {
+  const { status, data } = await apiCall('DELETE', `/channels/${channelId}/messages/${messageId}`, t);
   if (status === 429 && data?.retry_after) return { ok: false, retryAfter: data.retry_after * 1000 };
   return { ok: status === 204, retryAfter: 0 };
 };
@@ -322,7 +390,211 @@ async function actionPendingRequests(rl, token) {
   await ask(rl, `\n  ${C.gray}Press ENTER to go back...${C.r}`);
 }
 
-// ─── Main Menu ───────────────────────────────────────────────────
+// Bulk actions: DMs & Servers
+async function actionClearAllDMs(rl, token) {
+  console.log(`\n  ${C.cyan}Fetching DM channels...${C.r}`);
+  const dms = await getAllDMChannels(token);
+
+  if (!dms.length) {
+    console.log(`  ${C.gray}No DM conversations found.${C.r}`);
+    await ask(rl, `\n  ${C.gray}Press ENTER to go back...${C.r}`);
+    return;
+  }
+
+  console.log(`\n  ${C.yellow}⚠  Found ${C.bold}${dms.length}${C.r}${C.yellow} DM conversation(s).${C.r}`);
+  console.log(`  ${C.gray}This will close all of them permanently.${C.r}`);
+
+  const conf = (await ask(rl, `\n  ${C.red}Type "${C.bold}YES${C.r}${C.red}" to confirm: ${C.r}`)).trim();
+  if (conf !== 'YES') {
+    console.log(`  ${C.gray}Cancelled.${C.r}`);
+    await sleep(800);
+    return;
+  }
+
+  const rawDelay = await ask(rl, `  ${C.blue}Cooldown between each close (ms) [default 1000]: ${C.r}`);
+  const delay    = Math.max(500, parseInt(rawDelay) || 1000);
+
+  let closed = 0;
+  let failed = 0;
+  console.log();
+
+  for (let i = 0; i < dms.length; i++) {
+    const dm  = dms[i];
+    const name = dm.recipients?.[0]?.username || dm.id;
+    const pct  = `${i + 1}/${dms.length}`;
+
+    process.stdout.write(`  ${C.gray}[${pct}]${C.r} ${C.lgray}${name}${C.r} ... `);
+
+    const { ok, retryAfter } = await closeDM(token, dm.id);
+
+    if (ok) {
+      console.log(`${C.green}✓${C.r}`);
+      closed++;
+      if (i < dms.length - 1) await sleep(delay);
+    } else {
+      console.log(`${C.red}✗${C.r}`);
+      failed++;
+      const wait = retryAfter || delay * 3;
+      if (i < dms.length - 1) {
+        process.stdout.write(`  ${C.yellow}Rate limited — waiting ${(wait / 1000).toFixed(1)}s...${C.r}\r`);
+        await sleep(wait);
+        process.stdout.write(' '.repeat(60) + '\r');
+      }
+    }
+  }
+
+  console.log(`\n  ${hr(50)}`);
+  console.log(`  ${C.green}✓ Closed: ${closed}${C.r}   ${C.red}✗ Failed: ${failed}${C.r}`);
+  console.log(`  ${hr(50)}`);
+  await ask(rl, `\n  ${C.gray}Press ENTER to go back...${C.r}`);
+}
+
+async function actionLeaveAllServers(rl, token) {
+  console.log(`\n  ${C.cyan}Fetching servers...${C.r}`);
+  const guilds = await getAllGuilds(token);
+
+  if (!guilds.length) {
+    console.log(`  ${C.gray}You are not in any servers.${C.r}`);
+    await ask(rl, `\n  ${C.gray}Press ENTER to go back...${C.r}`);
+    return;
+  }
+
+  console.log(`\n  ${C.yellow}⚠  You are a member of ${C.bold}${guilds.length}${C.r}${C.yellow} server(s).${C.r}`);
+  console.log(`  ${C.gray}You will LEAVE all of them.${C.r}`);
+
+  const conf = (await ask(rl, `\n  ${C.red}Type "${C.bold}YES${C.r}${C.red}" to confirm: ${C.r}`)).trim();
+  if (conf !== 'YES') {
+    console.log(`  ${C.gray}Cancelled.${C.r}`);
+    await sleep(800);
+    return;
+  }
+
+  const rawDelay = await ask(rl, `  ${C.blue}Cooldown between each leave (ms) [default 1500]: ${C.r}`);
+  const delay    = Math.max(500, parseInt(rawDelay) || 1500);
+
+  let left = 0;
+  let failed = 0;
+  console.log();
+
+  for (let i = 0; i < guilds.length; i++) {
+    const guild = guilds[i];
+    const name  = guild.name;
+    const pct   = `${i + 1}/${guilds.length}`;
+
+    process.stdout.write(`  ${C.gray}[${pct}]${C.r} ${C.lgray}${name}${C.r} ... `);
+
+    const { ok, retryAfter } = await leaveGuild(token, guild.id);
+
+    if (ok) {
+      console.log(`${C.green}✓${C.r}`);
+      left++;
+      if (i < guilds.length - 1) await sleep(delay);
+    } else {
+      console.log(`${C.red}✗${C.r}`);
+      failed++;
+      const wait = retryAfter || delay * 3;
+      if (i < guilds.length - 1) {
+        process.stdout.write(`  ${C.yellow}Rate limited — waiting ${(wait / 1000).toFixed(1)}s...${C.r}\r`);
+        await sleep(wait);
+        process.stdout.write(' '.repeat(60) + '\r');
+      }
+    }
+  }
+
+  console.log(`\n  ${hr(50)}`);
+  console.log(`  ${C.green}✓ Left: ${left}${C.r}   ${C.red}✗ Failed: ${failed}${C.r}`);
+  console.log(`  ${hr(50)}`);
+  await ask(rl, `\n  ${C.gray}Press ENTER to go back...${C.r}`);
+}
+
+// 🆕 Delete all YOUR messages in a specific DM (by user ID)
+async function actionDeleteMyMessagesInDM(rl, token) {
+  const userId = (await ask(rl, `  ${C.blue}Enter the user ID: ${C.r}`)).trim();
+  if (!userId) {
+    console.log(`  ${C.gray}Cancelled.${C.r}`);
+    await sleep(800);
+    return;
+  }
+
+  console.log(`\n  ${C.cyan}Getting DM channel with that user...${C.r}`);
+  const dmChannel = await getOrCreateDM(token, userId);
+  if (!dmChannel) {
+    console.log(`  ${C.red}Could not find or create DM channel. Make sure the ID is correct and you share a server or are friends.${C.r}`);
+    await ask(rl, `\n  ${C.gray}Press ENTER to go back...${C.r}`);
+    return;
+  }
+
+  const channelId = dmChannel.id;
+  console.log(`  ${C.green}DM channel found.${C.r}`);
+  console.log(`  ${C.cyan}Fetching messages (this may take a while)...${C.r}`);
+
+  // Fetch user's own ID to filter
+  const me = await apiCall('GET', '/users/@me', token).then(r => r.data);
+  const myId = me?.id;
+  if (!myId) {
+    console.log(`  ${C.red}Could not identify your user ID.${C.r}`);
+    await ask(rl, `\n  ${C.gray}Press ENTER to go back...${C.r}`);
+    return;
+  }
+
+  const allMessages = await fetchAllMessages(token, channelId);
+  const myMessages = allMessages.filter(m => m.author.id === myId);
+
+  if (myMessages.length === 0) {
+    console.log(`  ${C.yellow}No messages from you in this conversation.${C.r}`);
+    await ask(rl, `\n  ${C.gray}Press ENTER to go back...${C.r}`);
+    return;
+  }
+
+  console.log(`\n  ${C.yellow}⚠  Found ${C.bold}${myMessages.length}${C.r}${C.yellow} message(s) sent by you.${C.r}`);
+  console.log(`  ${C.gray}They will be deleted one by one with a cooldown.${C.r}`);
+
+  const conf = (await ask(rl, `\n  ${C.red}Type "${C.bold}YES${C.r}${C.red}" to confirm deletion: ${C.r}`)).trim();
+  if (conf !== 'YES') {
+    console.log(`  ${C.gray}Cancelled.${C.r}`);
+    await sleep(800);
+    return;
+  }
+
+  const rawDelay = await ask(rl, `  ${C.blue}Cooldown between each deletion (ms) [default 1000]: ${C.r}`);
+  const delay    = Math.max(500, parseInt(rawDelay) || 1000);
+
+  let deleted = 0;
+  let failed  = 0;
+  console.log();
+
+  for (let i = 0; i < myMessages.length; i++) {
+    const msg = myMessages[i];
+    const pct = `${i + 1}/${myMessages.length}`;
+    const preview = (msg.content || '(attachment)').slice(0, 30);
+
+    process.stdout.write(`  ${C.gray}[${pct}]${C.r} "${preview}" ... `);
+
+    const { ok, retryAfter } = await deleteMessage(token, channelId, msg.id);
+
+    if (ok) {
+      console.log(`${C.green}✓${C.r}`);
+      deleted++;
+      if (i < myMessages.length - 1) await sleep(delay);
+    } else {
+      console.log(`${C.red}✗${C.r}`);
+      failed++;
+      const wait = retryAfter || delay * 3;
+      if (i < myMessages.length - 1) {
+        process.stdout.write(`  ${C.yellow}Rate limited — waiting ${(wait / 1000).toFixed(1)}s...${C.r}\r`);
+        await sleep(wait);
+        process.stdout.write(' '.repeat(60) + '\r');
+      }
+    }
+  }
+
+  console.log(`\n  ${hr(50)}`);
+  console.log(`  ${C.green}✓ Deleted: ${deleted}${C.r}   ${C.red}✗ Failed: ${failed}${C.r}`);
+  console.log(`  ${hr(50)}`);
+  await ask(rl, `\n  ${C.gray}Press ENTER to go back...${C.r}`);
+}
+
+// ─── Main Menu (Updated) ───────────────────────────────────────
 async function mainMenu(rl, token, user) {
   while (true) {
     cls();
@@ -335,7 +607,10 @@ async function mainMenu(rl, token, user) {
     console.log(`  ${C.blue}[3]${C.r}  ❌  Remove a Friend`);
     console.log(`  ${C.blue}[4]${C.r}  💥  Remove ALL Friends`);
     console.log(`  ${C.blue}[5]${C.r}  📨  Pending Requests`);
-    console.log(`  ${C.red}[6]${C.r}  🚪  Exit`);
+    console.log(`  ${C.blue}[6]${C.r}  💬  Clear ALL DMs`);
+    console.log(`  ${C.blue}[7]${C.r}  🚫  Leave ALL Servers`);
+    console.log(`  ${C.blue}[8]${C.r}  🗑️  Delete your messages with a user`);
+    console.log(`  ${C.red}[9]${C.r}  🚪  Exit`);
     console.log(`  ${hr(40)}`);
     console.log();
 
@@ -343,37 +618,19 @@ async function mainMenu(rl, token, user) {
     console.log();
 
     switch (choice) {
-      case '1': {
-        cls(); banner();
-        await actionViewFriends(rl, token);
-        break;
-      }
-      case '2': {
-        cls(); banner();
-        await actionSearchFriend(rl, token);
-        break;
-      }
-      case '3': {
-        cls(); banner();
-        await actionRemoveSingle(rl, token);
-        break;
-      }
-      case '4': {
-        cls(); banner();
-        await actionRemoveAll(rl, token);
-        break;
-      }
-      case '5': {
-        cls(); banner();
-        await actionPendingRequests(rl, token);
-        break;
-      }
-      case '6': {
+      case '1': cls(); banner(); await actionViewFriends(rl, token); break;
+      case '2': cls(); banner(); await actionSearchFriend(rl, token); break;
+      case '3': cls(); banner(); await actionRemoveSingle(rl, token); break;
+      case '4': cls(); banner(); await actionRemoveAll(rl, token); break;
+      case '5': cls(); banner(); await actionPendingRequests(rl, token); break;
+      case '6': cls(); banner(); await actionClearAllDMs(rl, token); break;
+      case '7': cls(); banner(); await actionLeaveAllServers(rl, token); break;
+      case '8': cls(); banner(); await actionDeleteMyMessagesInDM(rl, token); break;
+      case '9':
         cls();
         console.log(`\n  ${C.blue}Goodbye! 👋${C.r}\n`);
         rl.close();
         process.exit(0);
-      }
     }
   }
 }
