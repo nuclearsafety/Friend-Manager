@@ -1,8 +1,9 @@
-# Discord Friend Manager v1.2.0  
-# مدير أصدقاء ديسكورد – أداة CLI
+# Discord Friend Manager v1.2.0 (Standalone EXE)  
+# مدير أصدقاء ديسكورد – نسخة تنفيذية
 
 > Unofficial tool for managing Discord friends, DMs, servers & messages.  
-> أداة غير رسمية لإدارة الأصدقاء والمحادثات والسيرفرات والرسائل في Discord.
+> أداة غير رسمية لإدارة الأصدقاء والمحادثات والسيرفرات والرسائل في Discord.  
+> **No installation required – just run the executable.**
 
 ---
 
@@ -59,18 +60,21 @@ Redistribution, modification, or sale without explicit written permission is pro
 
 ## 📦 Requirements – المتطلبات
 
-- **Node.js** v18 or higher (no external packages)  
-  **Node.js** إصدار 18 أو أحدث (بدون حزم خارجية)
+- **No installation needed** – the tool is a single `.exe` file.  
+  **لا تحتاج تثبيت** – الأداة عبارة عن ملف `.exe` واحد.
+- Works on **Windows** (64-bit). For other OS, request a specific build.  
+  تعمل على **ويندوز 64-bit**. لأنظمة أخرى، اطلب بناء مخصص.
 
 ---
 
 ## 🚀 Usage – طريقة الاستخدام
 
-1. Get your user token (instructions appear when you run the tool).  
-   احصل على توكن حسابك (التعليمات تظهر عند تشغيل الأداة).
-2. Run in terminal / شغّل في الطرفية:
+1. **Get your Discord user token** (instructions appear when you run the tool).  
+   **احصل على توكن حسابك** (التعليمات تظهر عند تشغيل الأداة).
+2. **Double‑click the executable** or run it from Command Prompt:  
+   **انقر مرتين على الملف التنفيذي** أو شغّله من موجه الأوامر:
    ```bash
-   node index.js
+    Discord Friend Manager.exe
    ```
 3. Follow the interactive menu.  
    اتبع القائمة التفاعلية.
@@ -102,11 +106,17 @@ The developer is not responsible. Never share your token.
 **ماذا لو تسرب التوكن الخاص بي؟**  
 المطور غير مسؤول. لا تشارك توكنك مع أحد.
 
-**Can I modify the code?**  
-The source is provided for educational review. Any harmful modification is forbidden.
+**Can I modify the executable?**  
+The code is obfuscated and compiled – modification is extremely difficult and prohibited.
 
-**هل يمكنني تعديل الكود؟**  
-الكود متاح للتعلم فقط. يُمنع تعديله لأغراض ضارة.
+**هل يمكنني تعديل الملف التنفيذي؟**  
+الكود مشوّش ومترجم – التعديل صعب جداً وممنوع.
+
+**Why does Windows SmartScreen show a warning?**  
+Because the file is unsigned. It’s safe to run if you trust the source.
+
+**لماذا يظهر تحذير من Windows SmartScreen؟**  
+لأن الملف غير موقع. يمكن تشغيله بأمان إذا كنت تثق بالمصدر.
 
 ---
 
