@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * ╔════════════════════════════════════════════╗
- * ║     Discord Friend Manager  v1.0.0         ║
+ * ║     Discord Friend Manager  v1.0.2         ║
  * ║     Node.js CLI — Zero dependencies        ║
  * ╚════════════════════════════════════════════╝
  *
@@ -24,7 +24,7 @@ const C = {
   r      : '\x1b[0m',
   bold   : '\x1b[1m',
   dim    : '\x1b[2m',
-  blue   : '\x1b[38;5;99m',    // Discord blurple
+  blue   : '\x1b[38;5;99m',
   cyan   : '\x1b[38;5;117m',
   green  : '\x1b[38;5;83m',
   red    : '\x1b[38;5;203m',
@@ -48,32 +48,59 @@ ${C.blue}${C.bold}  ██████╗ ███████╗███╗  
   ██║  ██║██╔══╝  ██║╚██╔╝██║
   ██████╔╝██║     ██║ ╚═╝ ██║
   ╚═════╝ ╚═╝     ╚═╝     ╚═╝${C.r}
-${C.white}${C.bold}  Discord Friend Manager ${C.gray}v1.0.0${C.r}
+${C.white}${C.bold}  Discord Friend Manager ${C.gray}v1.0.2${C.r}
 ${C.yellow}  ⚠  Unofficial — may violate Discord ToS${C.r}
 `);
 }
 
-// ─── API Wrapper ────────────────────────────────────────────────
+// ─── API Wrapper (Fixed) ────────────────────────────────────────
 function apiCall(method, path, token, body = null) {
   return new Promise((resolve, reject) => {
     const payload = body ? JSON.stringify(body) : null;
 
+    // Remove any existing "Bearer " prefix – we’ll use the raw token
+    const cleanToken = token.replace(/^Bearer\s+/i, '');
+
+    const headers = {
+      'Authorization'      : cleanToken,
+      'User-Agent'         : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+      'X-Super-Properties' : Buffer.from(JSON.stringify({
+        os:'Windows', browser:'Chrome', device:'',
+        system_locale:'en-US',
+        browser_user_agent:'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+        browser_version:'126.0.0.0', os_version:'10',
+        referrer:'', referring_domain:'',
+        referrer_current:'', referring_domain_current:'',
+        release_channel:'stable', client_build_number:367562, client_event_source:null,
+      })).toString('base64'),
+      'X-Discord-Locale'   : 'en-US',
+    };
+
+    // Only set Content-Type / Origin / Referer when there is a body
+    if (payload) {
+      headers['Content-Type'] = 'application/json';
+      headers['Origin']       = 'https://discord.com';
+      headers['Referer']      = 'https://discord.com/channels/@me';
+    }
+
     const req = https.request({
       hostname : 'discord.com',
-      path     : `/api/v10${path}`,
+      path     : `/api/v9${path}`,
       method,
-      headers  : {
-        'Authorization'  : token,
-        'Content-Type'   : 'application/json',
-        'User-Agent'     : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
-        'X-Discord-Locale': 'en-US',
-      },
+      headers,
     }, (res) => {
       let buf = '';
       res.on('data', chunk => { buf += chunk; });
       res.on('end', () => {
-        try   { resolve({ status: res.statusCode, data: buf ? JSON.parse(buf) : null }); }
-        catch { resolve({ status: res.statusCode, data: null }); }
+        try {
+          const data = buf ? JSON.parse(buf) : null;
+          if (res.statusCode >= 400 && data?.message) {
+            console.log(`  ${C.red}API Error (${res.statusCode}): ${data.message}${C.r}`);
+          }
+          resolve({ status: res.statusCode, data });
+        } catch {
+          resolve({ status: res.statusCode, data: null });
+        }
       });
     });
 
@@ -84,16 +111,25 @@ function apiCall(method, path, token, body = null) {
 }
 
 // ─── Discord Helpers ────────────────────────────────────────────
-const verifyToken  = async (t) => {
+const verifyToken = async (t) => {
   const { status, data } = await apiCall('GET', '/users/@me', t);
-  return status === 200 ? data : null;
+  if (status !== 200) return null;
+  if (data?.bot) return { __isBot: true, username: data.username };
+  return data;
 };
 
 const getFriends = async (t) => {
   const { status, data } = await apiCall('GET', '/users/@me/relationships', t);
-  if (status !== 200) return [];
-  // type 1 = friend, type 2 = block, type 3 = incoming req, type 4 = outgoing req
-  return (data || []).filter(r => r.type === 1);
+  if (status === 401) { console.log(`\n  ${C.red}✗ Unauthorized — token may have expired.${C.r}`); return []; }
+  if (status !== 200) { console.log(`\n  ${C.red}✗ API error: HTTP ${status}${C.r}`); return []; }
+  const all = data || [];
+  const friends = all.filter(r => r.type === 1);
+  if (all.length > 0 && friends.length === 0) {
+    const types = all.reduce((acc, r) => { acc[r.type] = (acc[r.type] || 0) + 1; return acc; }, {});
+    console.log(`\n  ${C.yellow}ℹ  Found ${all.length} relationships but 0 friends.${C.r}`);
+    console.log(`  ${C.gray}Breakdown → type 2 (blocked): ${types[2]||0}, type 3 (incoming): ${types[3]||0}, type 4 (outgoing): ${types[4]||0}${C.r}`);
+  }
+  return friends;
 };
 
 const getPending = async (t) => {
@@ -108,7 +144,6 @@ const getPending = async (t) => {
 
 const removeFriend = async (t, id) => {
   const { status, data } = await apiCall('DELETE', `/users/@me/relationships/${id}`, t);
-  // 429 = rate limited
   if (status === 429 && data?.retry_after) return { ok: false, retryAfter: data.retry_after * 1000 };
   return { ok: status === 204, retryAfter: 0 };
 };
@@ -220,7 +255,7 @@ async function actionRemoveAll(rl, token) {
   }
 
   const rawDelay = await ask(rl, `  ${C.blue}Cooldown between each removal (ms) [default 1500]: ${C.r}`);
-  const delay    = Math.max(500, parseInt(rawDelay) || 1500); // minimum 500ms
+  const delay    = Math.max(500, parseInt(rawDelay) || 1500);
 
   let removed = 0;
   let failed  = 0;
@@ -242,7 +277,6 @@ async function actionRemoveAll(rl, token) {
     } else {
       console.log(`${C.red}✗${C.r}`);
       failed++;
-      // If rate-limited, wait extra
       const wait = retryAfter || delay * 3;
       if (i < friends.length - 1) {
         process.stdout.write(`  ${C.yellow}Rate limited — waiting ${(wait / 1000).toFixed(1)}s...${C.r}\r`);
@@ -377,6 +411,13 @@ async function mainMenu(rl, token, user) {
     }
 
     if (user) {
+      if (user.__isBot) {
+        console.log(`${C.red}✗ Bot Token detected!${C.r}`);
+        console.log(`  ${C.yellow}Bot tokens can't access friend lists.${C.r}`);
+        console.log(`  ${C.gray}You need a USER token, not a bot token.${C.r}\n`);
+        user = null;
+        continue;
+      }
       console.log(`${C.green}✓${C.r}`);
       break;
     }
