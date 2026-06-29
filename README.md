@@ -77,24 +77,6 @@ Redistribution, modification, or sale without explicit written permission is pro
 
 ---
 
-## 🔐 Optional Protection – حماية اختيارية
-
-To create a tamper‑resistant executable:  
-لإنشاء ملف تنفيذي يصعب تعديله:
-
-```bash
-# Obfuscate code (تشويش الكود)
-javascript-obfuscator index.js --output obfuscated.js
-
-# Compile to exe (تحويل لملف تنفيذي)
-pkg obfuscated.js --targets node18-win-x64 --output DiscordTool.exe
-```
-
-**Note:** 100% security is impossible; skilled reverse engineers can still inspect the binary.  
-**ملاحظة:** الحماية 100% مستحيلة، لكن هذا يصعّب العملية كثيراً.
-
----
-
 ## 🛡️ Privacy – الخصوصية
 
 - **No data is collected or sent anywhere.** All operations are local.  
