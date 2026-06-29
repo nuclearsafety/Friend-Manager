@@ -74,7 +74,7 @@ Redistribution, modification, or sale without explicit written permission is pro
 2. **Double‑click the executable** or run it from Command Prompt:  
    **انقر مرتين على الملف التنفيذي** أو شغّله من موجه الأوامر:
    ```bash
-   DiscordTool.exe
+   DFM.exe
    ```
 3. Follow the interactive menu.  
    اتبع القائمة التفاعلية.
