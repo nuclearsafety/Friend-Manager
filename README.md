@@ -130,4 +130,4 @@ By using it you agree to all the above terms.
 
 ---
 
-*Shout out to Kqarly*
+*Made with caution 🖤 | صُنع بحذر*
